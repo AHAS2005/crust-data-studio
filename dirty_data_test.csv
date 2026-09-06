@@ -1,0 +1,6 @@
+EmployeeID,Name,Age,Salary,JoinDate
+E001,John Doe,28,"$55,000",2023-01-15
+E002,jane smith ,thirty-two,62000,12/05/2022
+E003,Bob Johnson,45,"72,000",2024.03.01
+E004,Alice Brown,,48000k,2021-11-20
+E005,John Doe,29,55000,2023-01-15

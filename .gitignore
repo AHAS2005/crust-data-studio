@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+.npm
+npm-debug.log*
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Scratch and test files
+scratch/

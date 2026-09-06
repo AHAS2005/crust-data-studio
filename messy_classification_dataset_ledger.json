@@ -1,0 +1,12 @@
+{
+  "raw_data_hash": "693235d0a91817cbb6d7f050343e5149ea079acaa3f59c656bdd3de93f388bf7",
+  "steps": [
+    {
+      "step_id": 1,
+      "anomaly_target": "Tech_Spend_Score",
+      "description": "Auto-generated fix for disguised_null in Tech_Spend_Score",
+      "code_string": "def clean_step(df):\n    \"\"\"\n    Replace disguised null values ('unknown') in the Tech_Spend_Score column with pandas NA.\n    \"\"\"\n    col = \"Tech_Spend_Score\"\n    mask = df[col] == \"unknown\"\n    replaced = mask.sum()\n    if replaced:\n        df.loc[mask, col] = pd.NA\n        print(f\"Replaced {replaced} 'unknown' entries in column '{col}' with NA.\")\n    return df",
+      "function_name": "clean_step"
+    }
+  ]
+}
