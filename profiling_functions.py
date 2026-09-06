@@ -108,6 +108,12 @@ def _clean_numeric_series(series):
 
     success_rate = converted.notna().sum() / len(series) if len(series) > 0 else 0.0
 
+    # Remove "nan" from the failed dict — real NaN cells become the string "nan"
+    # after astype(str) but are semantically missing, not a non-numeric value.
+    # Including them would produce a false report entry like "nan appears 42 times".
+    failed_value_counts.pop("nan", None)
+    failed_value_counts.pop("<NA>", None)
+
     return converted, failed_value_counts, success_rate
 
 
@@ -145,10 +151,19 @@ def detect_column_types(df):
             column_types[col] = "invalid_mixed_types"
             continue
 
-        # Check boolean first
-        if set(series.unique()).issubset({True, False, 0, 1}):
+        # Check boolean first — only flag as boolean if dtype is already bool,
+        # OR if the column genuinely contains only Python True/False objects (not 0/1 integers).
+        # Without this guard, any binary numeric column (0/1) gets misclassified as boolean
+        # and bypasses outlier detection, numeric analysis, etc.
+        if pd.api.types.is_bool_dtype(series):
             column_types[col] = "boolean"
             continue
+        # Check if values are actual Python booleans (True/False), not just 0/1 ints
+        if series.dtype == object:
+            unique_vals = set(series.dropna().unique())
+            if unique_vals.issubset({True, False}) and any(isinstance(v, bool) for v in unique_vals):
+                column_types[col] = "boolean"
+                continue
 
         # Check numeric (the normal, already-clean case)
         if pd.api.types.is_numeric_dtype(series):
@@ -193,6 +208,9 @@ def check_missing_values(df):
     """
     Calculates missing value count and percentage per column.
     """
+    if len(df) == 0:
+        return pd.DataFrame(columns=["missing_count", "missing_percent"])
+
     missing_count = df.isnull().sum()
     missing_percent = (missing_count / len(df)) * 100
 
@@ -536,7 +554,8 @@ def check_date_formats(df, column_types):
         series = df[col].dropna().astype(str)
 
         formats_found = set()
-        day_over_12_seen = False   # proof some value MUST be DD/MM (day > 12)
+        day_over_12_seen = False          # proof some value MUST be DD/MM (day > 12)
+        day_under_or_equal_12_seen = False # there's also a value where first num ≤ 12 (ambiguous)
         month_position_varies = False
         parsed_structures = []
 
@@ -555,6 +574,8 @@ def check_date_formats(df, column_types):
                 first_num = int(parts[0])
                 if first_num > 12:
                     day_over_12_seen = True
+                else:
+                    day_under_or_equal_12_seen = True
 
         # Try parsing a sample with dateutil to double check these are
         # real, valid dates and not just date-shaped text
@@ -571,10 +592,15 @@ def check_date_formats(df, column_types):
         issues = {}
         if len(formats_found) > 1:
             issues["mixed_separator_formats"] = list(formats_found)
-        if day_over_12_seen and "slash-separated (e.g. MM/DD/YYYY or DD/MM/YYYY)" in formats_found:
+        # Only flag MM/DD vs DD/MM ambiguity if the column has BOTH values with first
+        # number ≤12 AND values with first number >12 — that's genuine ambiguity.
+        # A consistently DD/MM formatted column where all days >12 is NOT ambiguous.
+        if (day_over_12_seen and day_under_or_equal_12_seen and
+                "slash-separated (e.g. MM/DD/YYYY or DD/MM/YYYY)" in formats_found):
             issues["mm_dd_vs_dd_mm_ambiguity"] = (
-                "Some values have a first number > 12 (must be a day), which proves "
-                "this column mixes DD/MM and MM/DD ordering - genuinely ambiguous, not just cosmetic."
+                "This column has slash-separated dates where some values have a first number ≤12 "
+                "(could be either MM or DD) and some have a first number >12 (must be DD). "
+                "This means the ordering (MM/DD vs DD/MM) cannot be determined automatically."
             )
         if parse_success_rate < 0.9:
             issues["low_parse_confidence"] = f"Only {parse_success_rate*100:.0f}% of a sample parsed as valid dates"

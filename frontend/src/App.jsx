@@ -88,6 +88,9 @@ export default function App() {
       setSteps(data.steps || []);
       setSelectedColumn(null);
       setExplanations({});
+      // Close any open fix modal so stale diff data from previous file doesn't persist
+      setActiveFixData(null);
+      setActiveFixAnomaly(null);
     } catch (err) {
       setApiErrorBanner(`Upload failed: ${err.message}`);
     } finally {
@@ -108,6 +111,9 @@ export default function App() {
       setSteps(data.steps || []);
       setSelectedColumn(null);
       setExplanations({});
+      // Close any open fix modal so stale diff data from previous file doesn't persist
+      setActiveFixData(null);
+      setActiveFixAnomaly(null);
     } catch (err) {
       setApiErrorBanner(`Failed to load sample: ${err.message}`);
     } finally {
@@ -138,7 +144,7 @@ export default function App() {
     setApiErrorBanner(null);
     try {
       const data = await api.previewFix(anomaly, customInstruction);
-      setActiveFixData(data);
+      setActiveFixData({ ...data, customInstruction });
       setActiveFixAnomaly(anomaly);
     } catch (err) {
       setApiErrorBanner(`Fix preview failed: ${err.message}`);
@@ -172,9 +178,12 @@ export default function App() {
     if (!activeFixAnomaly) return;
     setIsApproving(true);
     try {
+      const desc = fixData.customInstruction
+        ? `Applied fix for ${activeFixAnomaly.issue} in ${activeFixAnomaly.column}: "${fixData.customInstruction}"`
+        : `Auto-generated fix for ${activeFixAnomaly.issue} in ${activeFixAnomaly.column}`;
       const data = await api.approveFix({
         anomalyTarget: activeFixAnomaly.column,
-        description: `Auto-generated fix for ${activeFixAnomaly.issue} in ${activeFixAnomaly.column}`,
+        description: desc,
         codeString: fixData.code,
       });
       setSteps(data.steps);
@@ -182,6 +191,7 @@ export default function App() {
       setHealthScore(data.health_score);
       setActiveFixData(null);
       setActiveFixAnomaly(null);
+      setApiErrorBanner(null);
     } catch (err) {
       setApiErrorBanner(`Failed to approve fix: ${err.message}`);
     } finally {
@@ -197,6 +207,7 @@ export default function App() {
       setSteps(data.steps);
       setReport(data.report);
       setHealthScore(data.health_score);
+      setApiErrorBanner(null);
     } catch (err) {
       setApiErrorBanner(`Rollback failed: ${err.message}`);
     } finally {

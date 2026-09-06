@@ -20,6 +20,7 @@ export default function SpotlightBar({ onAskQuestion, isAsking, result, onClearR
     if (!query.trim()) return;
     onAskQuestion(query.trim(), mode);
     setIsOpen(true);
+    setQuery('');
   };
 
   return (

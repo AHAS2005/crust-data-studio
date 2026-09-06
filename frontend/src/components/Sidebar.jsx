@@ -29,13 +29,15 @@ export default function Sidebar({
 
     anomalies.forEach(anomaly => {
       const col = anomaly.column;
-      // Note: Some date order anomalies might have "ColA / ColB"
+      // Direct match: this anomaly belongs to a known single column
       if (statusMap[col]) {
         statusMap[col].anomalies.push(anomaly);
       } else {
-        // Multi-column or unlisted
+        // Multi-column anomaly (e.g. "start_date / end_date") — check if any known
+        // column name appears in the anomaly's column string (split by " / ")
+        const anomalyCols = col.split(' / ').map(s => s.trim());
         columns.forEach(c => {
-          if (col.includes(c)) {
+          if (anomalyCols.includes(c)) {
             statusMap[c].anomalies.push(anomaly);
           }
         });
@@ -47,7 +49,8 @@ export default function Sidebar({
       const issueCount = entry.anomalies.length;
       const hasCritical = entry.anomalies.some(a => 
         (a.issue === 'missing_values' && a.percent > 20) || 
-        a.issue === 'invalid_mixed_types'
+        a.issue === 'mixed_numeric_column' ||  // correct backend type (was 'invalid_mixed_types')
+        a.issue === 'invalid_mixed_types'       // keep for backward compatibility
       );
 
       if (hasCritical) {

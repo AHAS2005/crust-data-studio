@@ -182,6 +182,10 @@ export const api = {
         model 
       }),
     });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || errData.error || `Server responded with status ${res.status}`);
+    }
     return res.json();
   },
 

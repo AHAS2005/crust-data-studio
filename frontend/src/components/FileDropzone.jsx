@@ -138,7 +138,7 @@ export default function FileDropzone({ onFileSelected, onLoadSample, isProfiling
             </div>
 
             <p className="text-xs text-slate-400 dark:text-slate-500">
-              CSV files supported • Multi-encoding resilient • Purely client-side preview
+              CSV files supported • Multi-encoding resilient • Secure in-memory session processing
             </p>
           </div>
         )}

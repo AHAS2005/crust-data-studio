@@ -143,26 +143,32 @@ export default function DiffModal({
                           return (
                             <React.Fragment key={rIdx}>
                               {/* Row 1: BEFORE / CURRENT */}
-                              <tr className="bg-slate-50/50 dark:bg-slate-850/50 hover:bg-slate-100/60 dark:hover:bg-slate-800/60 transition-colors">
+                              <tr className={`hover:bg-slate-100/60 dark:hover:bg-slate-800/60 transition-colors ${isDropped ? 'bg-rose-50/70 dark:bg-rose-950/40' : 'bg-slate-50/50 dark:bg-slate-850/50'}`}>
                                 <td rowSpan={isModified ? 2 : 1} className="p-3 font-bold text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-700 align-top">
                                   #{rowItem.row_index}
                                 </td>
                                 <td className="p-3 font-semibold text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-700 flex items-center gap-1">
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200">Before</span>
+                                  {isDropped ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-200 dark:bg-rose-900 text-rose-800 dark:text-rose-200 font-bold">🗑 DELETED</span>
+                                  ) : (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200">Before</span>
+                                  )}
                                 </td>
                                 {columns.map(col => {
                                   const cellChanged = modCols.has(col);
-                                  const val = rowItem.before[col];
+                                  const val = rowItem.before ? rowItem.before[col] : undefined;
                                   return (
                                     <td 
                                       key={col} 
                                       className={`p-3 border-r border-slate-200 dark:border-slate-700 transition-colors truncate max-w-[180px] ${
-                                        cellChanged 
-                                          ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-200 font-semibold ring-1 ring-inset ring-rose-200 dark:ring-rose-800' 
-                                          : 'text-slate-600 dark:text-slate-400'
+                                        isDropped
+                                          ? 'line-through text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50'
+                                          : cellChanged 
+                                            ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-200 font-semibold ring-1 ring-inset ring-rose-200 dark:ring-rose-800' 
+                                            : 'text-slate-600 dark:text-slate-400'
                                       }`}
                                     >
-                                      {val === null ? <em className="text-slate-400">null</em> : String(val)}
+                                      {val === null || val === undefined ? <em className="text-slate-400">null</em> : String(val)}
                                     </td>
                                   );
                                 })}
@@ -176,7 +182,7 @@ export default function DiffModal({
                                   </td>
                                   {columns.map(col => {
                                     const cellChanged = modCols.has(col);
-                                    const val = rowItem.after[col];
+                                    const val = rowItem.after ? rowItem.after[col] : undefined;
                                     return (
                                       <td 
                                         key={col} 
@@ -186,7 +192,7 @@ export default function DiffModal({
                                             : 'text-slate-600 dark:text-slate-400'
                                         }`}
                                       >
-                                        {val === null ? <em className="text-slate-400">null</em> : String(val)}
+                                        {val === null || val === undefined ? <em className="text-slate-400">null</em> : String(val)}
                                       </td>
                                     );
                                   })}

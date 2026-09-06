@@ -80,8 +80,13 @@ export default function AnomalyInbox({
   };
 
   // Filter anomalies for the selected column or show all
+  // Use exact equality for single-column anomalies, split-based for multi-column
   const displayedAnomalies = selectedColumn 
-    ? anomalies.filter(a => a.column === selectedColumn || a.column.includes(selectedColumn))
+    ? anomalies.filter(a => {
+        if (a.column === selectedColumn) return true;
+        // Handle multi-column anomalies like "start_date / end_date"
+        return a.column.split(' / ').map(s => s.trim()).includes(selectedColumn);
+      })
     : anomalies;
 
   const toggleExpand = (anomalyKey) => {
@@ -162,18 +167,20 @@ export default function AnomalyInbox({
       {/* Cards List */}
       <div className="space-y-4">
         {displayedAnomalies.map((anomaly, idx) => {
-          const cardKey = `${anomaly.column}-${anomaly.issue}-${idx}`;
+          // Stable key: no idx — use column + issue only so explanations survive re-filter/re-sort
+          const cardKey = `${anomaly.column}-${anomaly.issue}`;
           const isExplaining = loadingExplainId === cardKey;
           const isFixing = loadingFixId === cardKey;
           const explanation = explanations[cardKey];
-          const isExpanded = expandedCards[cardKey] || !!explanation;
+          // isExpanded respects explicit toggle state; falls back to true only on first load
+          const isExpanded = expandedCards[cardKey] !== undefined ? expandedCards[cardKey] : !!explanation;
 
           const quickActions = getQuickActions(anomaly);
           const currentPrompt = customPrompts[cardKey] || '';
 
           return (
             <div 
-              key={cardKey}
+              key={`${anomaly.column}-${anomaly.issue}-${idx}`}
               className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
             >
               {/* Card Body */}
@@ -186,9 +193,12 @@ export default function AnomalyInbox({
                       {anomaly.column}
                     </span>
                     {getIssueBadge(anomaly.issue)}
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                      Fix Available
-                    </span>
+                    {/* Only show "Fix Available" badge when a fix type actually applies */}
+                    {['missing_values','outliers','mixed_numeric_column','disguised_null','inconsistent_categories','suggested_fuzzy_merges','date_format_issues'].includes(anomaly.issue) && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                        Fix Available
+                      </span>
+                    )}
                   </div>
 
                   <button

@@ -31,11 +31,14 @@ export default function LiveDataPanel({
   const [search, setSearch] = useState('');
   const [isExpanded, setIsExpanded] = useState(false); // Split screen vs full width
 
-  const fetchData = async () => {
+  // Accept an optional overridePage so callers (e.g. search debounce resetting to page 1)
+  // don't hit stale closure issues with the `page` state variable.
+  const fetchData = async (overridePage) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.getDataPreview(page, pageSize, modifiedOnly, search);
+      const activePage = overridePage !== undefined ? overridePage : page;
+      const res = await api.getDataPreview(activePage, pageSize, modifiedOnly, search);
       setData(res);
     } catch (err) {
       setError(err.message || 'Failed to load live data');
@@ -51,12 +54,13 @@ export default function LiveDataPanel({
     }
   }, [isOpen, page, pageSize, modifiedOnly, stepCount]);
 
-  // Debounce search
+  // Debounce search — always reset to page 1 and pass it directly to fetchData
+  // to avoid stale closure reading the old `page` value
   useEffect(() => {
     if (!isOpen) return;
     const timer = setTimeout(() => {
       setPage(1);
-      fetchData();
+      fetchData(1); // pass 1 explicitly — don't rely on state update being synchronous
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);

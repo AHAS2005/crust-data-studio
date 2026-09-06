@@ -198,6 +198,12 @@ def _exec_function_inprocess(cleaned_code, function_name, df):
     with contextlib.redirect_stdout(captured):
         result_df = cleaning_function(df)
 
+    if not isinstance(result_df, pd.DataFrame):
+        raise ValueError(
+            f"'{function_name}' must return a pandas DataFrame, but returned "
+            f"{type(result_df).__name__}. Make sure your function ends with 'return df'."
+        )
+
     return result_df, captured.getvalue().strip()
 
 
@@ -534,7 +540,8 @@ def compute_cell_diff_sample(df_before, df_after, max_rows=15):
                 })
         
         # Check modified remaining rows
-        common_indices = [i for i in df_before.index if i in df_after.index]
+        # Use index intersection (O(n log n)) instead of list comprehension (O(n²))
+        common_indices = df_before.index.intersection(df_after.index)
         common_cols = [c for c in columns if c in df_before.columns and c in df_after.columns]
         for idx in common_indices:
             row_b = df_before.loc[idx]
@@ -1032,16 +1039,39 @@ def mock_llm_call(prompt):
             )
 
         if "suggested_fuzzy_merges" in user_text or "inconsistent_category_spelling" in user_text:
-            return (
-                "def clean_step(df):\n"
-                "    import pandas as pd\n"
-                f"    col = '{target_col}'\n"
-                "    if col in df.columns:\n"
-                "        replacements = {'Appel': 'Apple', 'Samsng': 'Samsung', 'Nothin': 'Nothing', 'uk ': 'UK', 'usa': 'USA', 'CANADA': 'Canada'}\n"
-                "        df[col] = df[col].replace(replacements)\n"
-                "        print(f'Standardized inconsistent categories in {col}')\n"
-                "    return df"
-            )
+            # Try to build dynamic replacements from the anomaly's suggested_fuzzy_merges field
+            replacements = {}
+            if isinstance(anomaly_data, dict):
+                for merge_group in anomaly_data.get("suggested_fuzzy_merges", []):
+                    if isinstance(merge_group, list) and len(merge_group) >= 2:
+                        # Use the first value as canonical (usually the most common)
+                        canonical = str(merge_group[0])
+                        for variant in merge_group[1:]:
+                            replacements[str(variant)] = canonical
+
+            if replacements:
+                replacements_repr = repr(replacements)
+                return (
+                    "def clean_step(df):\n"
+                    "    import pandas as pd\n"
+                    f"    col = '{target_col}'\n"
+                    "    if col in df.columns:\n"
+                    f"        replacements = {replacements_repr}\n"
+                    "        df[col] = df[col].replace(replacements)\n"
+                    "        print(f'Standardized inconsistent categories in {col}')\n"
+                    "    return df"
+                )
+            else:
+                # Fallback: normalize case and strip whitespace
+                return (
+                    "def clean_step(df):\n"
+                    "    import pandas as pd\n"
+                    f"    col = '{target_col}'\n"
+                    "    if col in df.columns:\n"
+                    "        df[col] = df[col].astype(str).str.strip().str.title()\n"
+                    "        print(f'Normalized category casing and whitespace in {col}')\n"
+                    "    return df"
+                )
 
         # Generic fallback
         return (
@@ -1054,19 +1084,21 @@ def mock_llm_call(prompt):
 
     # --- Direct data summary requests (descriptive questions) ---
     if "Dataset context:" in user_text:
-        return ("This dataset appears to capture user profile and behavior information, "
-                "including demographics (Age), financial data (Annual_Income), technology "
-                "spending patterns (Tech_Spend_Score), brand preference (Preferred_Brand), "
-                "and premium membership status (Is_Premium_User). Some columns have known "
-                "data quality issues, such as missing values and mixed numeric/text entries.")
+        # Return a generic, honest offline-mode response rather than fictional column names
+        return (
+            "[OFFLINE DEMO MODE] The AI assistant is running without a live LLM connection. "
+            "To get real, dataset-specific answers about your data's columns, trends, and quality issues, "
+            "please configure a live LLM provider in the Settings (⚙) panel — "
+            "NVIDIA NIM, Groq, or any custom OpenAI-compatible endpoint works. "
+            "In offline mode only mock responses are available."
+        )
 
     # --- Analysis plan requests ---
     if "Question:" in user_text:
+        # Return a generic honest offline response
         return json.dumps([
-            {"step": "Filter data to the relevant time period"},
-            {"step": "Group by the relevant category column"},
-            {"step": "Calculate change over time within each group"},
-            {"step": "Identify which group(s) contributed most to the overall change"}
+            {"step": "[OFFLINE DEMO MODE] Configure a live LLM provider in Settings to get a real analysis plan."},
+            {"step": "Supported providers: NVIDIA NIM (free tier available), Groq (free tier available), or any custom OpenAI-compatible endpoint."}
         ])
 
     return "No mock response defined for this prompt pattern."
@@ -1076,7 +1108,7 @@ def mock_llm_call(prompt):
 # LIVE LLM CALL (Groq) - secondary fallback provider
 # ---------------------------------------------------------
 
-def live_llm_call_groq(prompt, model="openai/gpt-oss-120b", max_retries=3, api_key=None):
+def live_llm_call_groq(prompt, model="llama-3.3-70b-versatile", max_retries=3, api_key=None):
     """
     Sends the prompt to the Groq API and returns the raw text response.
     Requires `pip install groq`. Uses api_key if supplied, otherwise GROQ_API_KEY env var.
@@ -1131,9 +1163,9 @@ def live_llm_call_groq(prompt, model="openai/gpt-oss-120b", max_retries=3, api_k
     raise RuntimeError(f"Groq API call failed after {max_retries} retries: {last_error}")
 
 
-def live_llm_call_nemotron(prompt, model="nvidia/nemotron-3-ultra-550b-a55b", max_retries=3, api_key=None):
+def live_llm_call_nemotron(prompt, model="nvidia/llama-3.1-nemotron-70b-instruct", max_retries=3, api_key=None):
     """
-    Sends the prompt to NVIDIA's Nemotron 3 Ultra via NVIDIA NIM.
+    Sends the prompt to NVIDIA's Nemotron 70B via NVIDIA NIM.
     Uses api_key if supplied, otherwise NVIDIA_API_KEY env var.
     """
     import time

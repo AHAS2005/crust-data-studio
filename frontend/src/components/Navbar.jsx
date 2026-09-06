@@ -154,7 +154,7 @@ export default function Navbar({
               <History className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />
               <span className="hidden sm:inline">History</span>
               {stepCount > 0 && (
-                <span className="ml-1 px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+                <span className="ml-1 px-1.5 py-0.5 rounded-full bg-blue-600 text-white text-[10px] font-bold">
                   {stepCount}
                 </span>
               )}
