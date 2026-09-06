@@ -1,4 +1,13 @@
-// API communication layer with Bring-Your-Own-Key header injection
+// API communication layer with Bring-Your-Own-Key header injection and Multi-User Session Isolation
+
+export const getSessionId = () => {
+  let sessionId = localStorage.getItem('cs_session_id');
+  if (!sessionId) {
+    sessionId = 'sess_' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).substring(2)));
+    localStorage.setItem('cs_session_id', sessionId);
+  }
+  return sessionId;
+};
 
 export const getApiHeaders = () => {
   const nvidiaKey = localStorage.getItem('cs_nvidia_key') || '';
@@ -9,6 +18,7 @@ export const getApiHeaders = () => {
   const customKey = localStorage.getItem('cs_custom_key') || '';
 
   return {
+    'x-session-id': getSessionId(),
     'x-nvidia-api-key': nvidiaKey,
     'x-groq-api-key': groqKey,
     'x-llm-provider': provider,
@@ -22,7 +32,11 @@ const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 export const api = {
   getStatus: async () => {
-    const res = await fetch(`${API_BASE}/status`);
+    const res = await fetch(`${API_BASE}/status`, {
+      headers: {
+        'x-session-id': getSessionId(),
+      }
+    });
     if (!res.ok) throw new Error('Failed to fetch status');
     return res.json();
   },
@@ -32,6 +46,9 @@ export const api = {
     formData.append('file', file);
     const res = await fetch(`${API_BASE}/upload`, {
       method: 'POST',
+      headers: {
+        'x-session-id': getSessionId(),
+      },
       body: formData,
     });
     if (!res.ok) {
@@ -44,6 +61,9 @@ export const api = {
   loadSample: async () => {
     const res = await fetch(`${API_BASE}/load-sample`, {
       method: 'POST',
+      headers: {
+        'x-session-id': getSessionId(),
+      },
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Failed to load sample' }));
@@ -71,6 +91,9 @@ export const api = {
   resetWorkspace: async () => {
     const res = await fetch(`${API_BASE}/reset`, {
       method: 'POST',
+      headers: {
+        'x-session-id': getSessionId(),
+      },
     });
     if (!res.ok) throw new Error('Reset failed');
     return res.json();
@@ -98,7 +121,10 @@ export const api = {
   approveFix: async ({ anomalyTarget, description, codeString }) => {
     const res = await fetch(`${API_BASE}/ledger/approve`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-session-id': getSessionId(),
+      },
       body: JSON.stringify({
         anomaly_target: anomalyTarget,
         description,
@@ -116,7 +142,10 @@ export const api = {
   rollbackStep: async (stepId, mode = 'cascade') => {
     const res = await fetch(`${API_BASE}/ledger/rollback`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-session-id': getSessionId(),
+      },
       body: JSON.stringify({ step_id: stepId, mode }),
     });
     if (!res.ok) {
@@ -179,7 +208,11 @@ export const api = {
       modified_only: String(modifiedOnly),
       search: search || '',
     });
-    const res = await fetch(`${API_BASE}/data-preview?${params.toString()}`);
+    const res = await fetch(`${API_BASE}/data-preview?${params.toString()}`, {
+      headers: {
+        'x-session-id': getSessionId(),
+      }
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Failed to fetch data preview' }));
       throw new Error(err.detail || 'Failed to fetch data preview');
@@ -187,6 +220,11 @@ export const api = {
     return res.json();
   },
 
-  exportCsvUrl: `${API_BASE}/export-csv`,
-  exportLedgerUrl: `${API_BASE}/export-ledger`,
+  get exportCsvUrl() {
+    return `${API_BASE}/export-csv?session_id=${encodeURIComponent(getSessionId())}`;
+  },
+  get exportLedgerUrl() {
+    return `${API_BASE}/export-ledger?session_id=${encodeURIComponent(getSessionId())}`;
+  },
 };
+

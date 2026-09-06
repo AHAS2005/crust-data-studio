@@ -42,15 +42,46 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global in-memory session state
-state = {
-    "df_raw": None,
-    "df_current": None,
-    "ledger": None,
-    "report": None,
-    "filename": "No dataset loaded",
-    "raw_info": None
-}
+import time
+import threading
+
+# Multi-Tenant In-Memory Session Storage
+# Maps session_id (str) -> dict containing dataset state & metadata
+sessions: Dict[str, dict] = {}
+_session_lock = threading.Lock()
+
+def create_default_session() -> dict:
+    return {
+        "df_raw": None,
+        "df_current": None,
+        "ledger": None,
+        "report": None,
+        "filename": "No dataset loaded",
+        "raw_info": None,
+        "last_active": time.time()
+    }
+
+def get_session(session_id: Optional[str]) -> dict:
+    """Returns the isolated session dictionary for a specific user.
+    Creates a new isolated session if none exists or if session_id is omitted.
+    Automatically trims expired sessions (> 4 hours inactive) to keep memory lean.
+    """
+    sid = (session_id or "").strip() or "default"
+    now = time.time()
+
+    with _session_lock:
+        # Periodic cleanup of sessions older than 4 hours
+        if len(sessions) > 50:
+            expired = [k for k, v in sessions.items() if (now - v.get("last_active", 0)) > 14400]
+            for k in expired:
+                sessions.pop(k, None)
+
+        if sid not in sessions:
+            sessions[sid] = create_default_session()
+        else:
+            sessions[sid]["last_active"] = now
+
+        return sessions[sid]
 
 
 import math
@@ -157,8 +188,9 @@ def get_llm_credentials(
 
 
 @app.get("/api/status")
-def get_status():
-    if state["df_raw"] is None:
+def get_status(x_session_id: Optional[str] = Header(None)):
+    sess = get_session(x_session_id)
+    if sess["df_raw"] is None:
         return clean_for_json({
             "loaded": False,
             "filename": None,
@@ -171,18 +203,21 @@ def get_status():
         })
     return clean_for_json({
         "loaded": True,
-        "filename": state["filename"],
-        "total_rows": len(state["df_current"]),
-        "total_columns": len(state["df_current"].columns),
-        "health_score": calculate_health_score(state["report"]),
-        "step_count": len(state["ledger"].steps) if state["ledger"] else 0,
-        "steps": state["ledger"].steps if state["ledger"] else [],
-        "report": state["report"]
+        "filename": sess["filename"],
+        "total_rows": len(sess["df_current"]),
+        "total_columns": len(sess["df_current"].columns),
+        "health_score": calculate_health_score(sess["report"]),
+        "step_count": len(sess["ledger"].steps) if sess["ledger"] else 0,
+        "steps": sess["ledger"].steps if sess["ledger"] else [],
+        "report": sess["report"]
     })
 
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    x_session_id: Optional[str] = Header(None)
+):
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Please upload a CSV file.")
 
@@ -203,35 +238,37 @@ async def upload_file(file: UploadFile = File(...)):
             except Exception:
                 pass
 
-    state["df_raw"] = df.copy()
-    state["df_current"] = df.copy()
-    state["ledger"] = CleaningLedger(df)
-    state["filename"] = file.filename
-    state["raw_info"] = info
-    state["report"] = generate_health_report(df)
+    sess = get_session(x_session_id)
+    sess["df_raw"] = df.copy()
+    sess["df_current"] = df.copy()
+    sess["ledger"] = CleaningLedger(df)
+    sess["filename"] = file.filename
+    sess["raw_info"] = info
+    sess["report"] = generate_health_report(df)
 
     return clean_for_json({
         "filename": file.filename,
         "info": info,
-        "report": state["report"],
-        "health_score": calculate_health_score(state["report"]),
+        "report": sess["report"],
+        "health_score": calculate_health_score(sess["report"]),
         "steps": []
     })
 
 
 @app.post("/api/load-sample")
-def load_sample_dataset():
+def load_sample_dataset(x_session_id: Optional[str] = Header(None)):
     sample_path = "messy_classification_dataset.csv"
     if not os.path.exists(sample_path):
         raise HTTPException(status_code=404, detail="Sample dataset not found.")
 
     df, info = load_data(sample_path)
-    state["df_raw"] = df.copy()
-    state["df_current"] = df.copy()
-    state["ledger"] = CleaningLedger(df)
-    state["filename"] = "messy_classification_dataset.csv"
-    state["raw_info"] = info
-    state["report"] = generate_health_report(df)
+    sess = get_session(x_session_id)
+    sess["df_raw"] = df.copy()
+    sess["df_current"] = df.copy()
+    sess["ledger"] = CleaningLedger(df)
+    sess["filename"] = "messy_classification_dataset.csv"
+    sess["raw_info"] = info
+    sess["report"] = generate_health_report(df)
 
     # Check if a sample ledger exists to offer context
     ledger_path = "messy_classification_dataset_ledger.json"
@@ -245,28 +282,30 @@ def load_sample_dataset():
             steps = []
 
     return clean_for_json({
-        "filename": state["filename"],
+        "filename": sess["filename"],
         "info": info,
-        "report": state["report"],
-        "health_score": calculate_health_score(state["report"]),
+        "report": sess["report"],
+        "health_score": calculate_health_score(sess["report"]),
         "steps": steps
     })
 
 
 @app.post("/api/reset")
-def reset_workspace():
-    state["df_raw"] = None
-    state["df_current"] = None
-    state["ledger"] = None
-    state["report"] = None
-    state["filename"] = "No dataset loaded"
-    state["raw_info"] = None
+def reset_workspace(x_session_id: Optional[str] = Header(None)):
+    sess = get_session(x_session_id)
+    sess["df_raw"] = None
+    sess["df_current"] = None
+    sess["ledger"] = None
+    sess["report"] = None
+    sess["filename"] = "No dataset loaded"
+    sess["raw_info"] = None
     return clean_for_json({"success": True, "status": "ok", "message": "Workspace reset successfully"})
 
 
 @app.post("/api/explain")
 def explain_anomaly(
     req: ExplainRequest,
+    x_session_id: Optional[str] = Header(None),
     x_nvidia_api_key: Optional[str] = Header(None),
     x_groq_api_key: Optional[str] = Header(None),
     x_llm_provider: Optional[str] = Header(None),
@@ -297,6 +336,7 @@ def explain_anomaly(
 @app.post("/api/preview-fix")
 def preview_fix(
     req: PreviewFixRequest,
+    x_session_id: Optional[str] = Header(None),
     x_nvidia_api_key: Optional[str] = Header(None),
     x_groq_api_key: Optional[str] = Header(None),
     x_llm_provider: Optional[str] = Header(None),
@@ -304,7 +344,8 @@ def preview_fix(
     x_custom_model: Optional[str] = Header(None),
     x_custom_key: Optional[str] = Header(None)
 ):
-    if state["df_current"] is None:
+    sess = get_session(x_session_id)
+    if sess["df_current"] is None:
         raise HTTPException(status_code=400, detail="No dataset loaded.")
 
     creds = get_llm_credentials(
@@ -329,7 +370,7 @@ def preview_fix(
 
     try:
         preview_df, captured_output = safe_exec_cleaning_function(
-            code, "clean_step", state["df_current"], make_copy=True, timeout_seconds=8
+            code, "clean_step", sess["df_current"], make_copy=True, timeout_seconds=8
         )
     except TimeoutError as e:
         raise HTTPException(status_code=400, detail=f"Execution timed out (infinite loop protection): {e}")
@@ -338,9 +379,9 @@ def preview_fix(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Execution failed: {e}")
 
-    diff = compute_diff(state["df_current"], preview_df)
-    is_safe, rejection_reason = check_diff_safety(diff, state["df_current"])
-    cell_diff = compute_cell_diff_sample(state["df_current"], preview_df, max_rows=15)
+    diff = compute_diff(sess["df_current"], preview_df)
+    is_safe, rejection_reason = check_diff_safety(diff, sess["df_current"])
+    cell_diff = compute_cell_diff_sample(sess["df_current"], preview_df, max_rows=15)
 
     return clean_for_json({
         "code": code,
@@ -353,11 +394,15 @@ def preview_fix(
 
 
 @app.post("/api/ledger/approve")
-def approve_fix(req: ApproveFixRequest):
-    if state["df_current"] is None or state["ledger"] is None:
+def approve_fix(
+    req: ApproveFixRequest,
+    x_session_id: Optional[str] = Header(None)
+):
+    sess = get_session(x_session_id)
+    if sess["df_current"] is None or sess["ledger"] is None:
         raise HTTPException(status_code=400, detail="No active dataset or ledger.")
 
-    state["ledger"].add_step(
+    sess["ledger"].add_step(
         anomaly_target=req.anomaly_target,
         description=req.description,
         code_string=req.code_string,
@@ -365,44 +410,48 @@ def approve_fix(req: ApproveFixRequest):
     )
 
     # Replay all approved steps sequentially from raw data
-    df_replayed, warnings = state["ledger"].replay()
-    state["df_current"] = df_replayed
-    state["report"] = generate_health_report(df_replayed)
+    df_replayed, warnings = sess["ledger"].replay()
+    sess["df_current"] = df_replayed
+    sess["report"] = generate_health_report(df_replayed)
 
     return clean_for_json({
-        "steps": state["ledger"].steps,
-        "report": state["report"],
-        "health_score": calculate_health_score(state["report"]),
+        "steps": sess["ledger"].steps,
+        "report": sess["report"],
+        "health_score": calculate_health_score(sess["report"]),
         "warnings": warnings
     })
 
 
 @app.post("/api/ledger/rollback")
-def rollback_step(req: RollbackRequest):
-    if state["df_raw"] is None or state["ledger"] is None:
+def rollback_step(
+    req: RollbackRequest,
+    x_session_id: Optional[str] = Header(None)
+):
+    sess = get_session(x_session_id)
+    if sess["df_raw"] is None or sess["ledger"] is None:
         raise HTTPException(status_code=400, detail="No active dataset.")
 
-    existing_steps = state["ledger"].steps
+    existing_steps = sess["ledger"].steps
     if not existing_steps:
         raise HTTPException(status_code=400, detail="No approved steps in ledger.")
 
     target_id = req.step_id
     if req.mode == "cascade":
         # Remove the target step and every step approved AFTER it
-        state["ledger"].steps = [s for s in existing_steps if s["step_id"] < target_id]
+        sess["ledger"].steps = [s for s in existing_steps if s["step_id"] < target_id]
     else:
         # Single step removal
-        state["ledger"].remove_step(target_id)
+        sess["ledger"].remove_step(target_id)
 
     # Replay against raw
-    df_replayed, warnings = state["ledger"].replay()
-    state["df_current"] = df_replayed
-    state["report"] = generate_health_report(df_replayed)
+    df_replayed, warnings = sess["ledger"].replay()
+    sess["df_current"] = df_replayed
+    sess["report"] = generate_health_report(df_replayed)
 
     return clean_for_json({
-        "steps": state["ledger"].steps,
-        "report": state["report"],
-        "health_score": calculate_health_score(state["report"]),
+        "steps": sess["ledger"].steps,
+        "report": sess["report"],
+        "health_score": calculate_health_score(sess["report"]),
         "warnings": warnings
     })
 
@@ -410,6 +459,7 @@ def rollback_step(req: RollbackRequest):
 @app.post("/api/ask")
 def ask_question(
     req: AskRequest,
+    x_session_id: Optional[str] = Header(None),
     x_nvidia_api_key: Optional[str] = Header(None),
     x_groq_api_key: Optional[str] = Header(None),
     x_llm_provider: Optional[str] = Header(None),
@@ -417,7 +467,8 @@ def ask_question(
     x_custom_model: Optional[str] = Header(None),
     x_custom_key: Optional[str] = Header(None)
 ):
-    if state["report"] is None:
+    sess = get_session(x_session_id)
+    if sess["report"] is None:
         raise HTTPException(status_code=400, detail="Please upload a dataset first.")
 
     creds = get_llm_credentials(
@@ -427,7 +478,7 @@ def ask_question(
 
     try:
         if req.mode == "analytical":
-            schema = state["report"].get("column_types", {})
+            schema = sess["report"].get("column_types", {})
             plan = get_analysis_plan(
                 req.question, schema,
                 use_mock=creds["use_mock"],
@@ -441,7 +492,7 @@ def ask_question(
             return clean_for_json({"mode": "analytical", "plan": plan})
         else:
             answer = get_data_summary(
-                req.question, state["report"],
+                req.question, sess["report"],
                 use_mock=creds["use_mock"],
                 provider=creds["provider"],
                 nvidia_api_key=creds["nvidia_api_key"],
@@ -460,13 +511,15 @@ def get_data_preview(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=10, le=200),
     modified_only: bool = Query(False),
-    search: str = Query("")
+    search: str = Query(""),
+    x_session_id: Optional[str] = Header(None)
 ):
-    if state["df_current"] is None:
+    sess = get_session(x_session_id)
+    if sess["df_current"] is None:
         raise HTTPException(status_code=400, detail="No dataset loaded.")
 
-    df_curr = state["df_current"]
-    df_raw = state["df_raw"]
+    df_curr = sess["df_current"]
+    df_raw = sess["df_raw"]
     columns = list(df_curr.columns)
 
     modified_columns = set()
@@ -553,20 +606,25 @@ def get_data_preview(
         "page_size": page_size,
         "modified_columns": list(modified_columns),
         "modified_row_count": len(modified_row_indices),
-        "filename": state["filename"]
+        "filename": sess["filename"]
     })
 
 
 @app.get("/api/export-csv")
-def export_csv():
-    if state["df_current"] is None:
+def export_csv(
+    session_id: Optional[str] = Query(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    sid = session_id or x_session_id
+    sess = get_session(sid)
+    if sess["df_current"] is None:
         raise HTTPException(status_code=400, detail="No dataset available.")
 
     csv_buffer = io.StringIO()
-    state["df_current"].to_csv(csv_buffer, index=False)
+    sess["df_current"].to_csv(csv_buffer, index=False)
     csv_buffer.seek(0)
 
-    filename = state["filename"].replace(".csv", "_cleaned.csv")
+    filename = (sess["filename"] or "dataset.csv").replace(".csv", "_cleaned.csv")
     return StreamingResponse(
         iter([csv_buffer.getvalue()]),
         media_type="text/csv",
@@ -575,12 +633,17 @@ def export_csv():
 
 
 @app.get("/api/export-ledger")
-def export_ledger():
-    if state["ledger"] is None:
+def export_ledger(
+    session_id: Optional[str] = Query(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    sid = session_id or x_session_id
+    sess = get_session(sid)
+    if sess["ledger"] is None:
         raise HTTPException(status_code=400, detail="No ledger available.")
 
-    ledger_json = state["ledger"].export_json()
-    filename = state["filename"].replace(".csv", "_ledger.json")
+    ledger_json = sess["ledger"].export_json()
+    filename = (sess["filename"] or "dataset.csv").replace(".csv", "_ledger.json")
     return StreamingResponse(
         iter([ledger_json]),
         media_type="application/json",
