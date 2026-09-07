@@ -19,6 +19,16 @@ import os
 import contextlib
 
 
+class CodeSecurityError(ValueError):
+    """Raised when AST or pattern guardrails reject unpermitted code."""
+    pass
+
+
+class CleaningExecutionError(RuntimeError):
+    """Raised when generated cleaning code raises a Python or pandas runtime error."""
+    pass
+
+
 # ---------------------------------------------------------
 # STEP 0: extract code from a real LLM's markdown-wrapped response
 # ---------------------------------------------------------
@@ -153,11 +163,11 @@ def _validate_and_prepare_code(code_string):
     and trusted (in-process/replay) execution paths - safety checking
     itself doesn't change based on trust level, only HOW the code runs
     afterward does. Returns the cleaned code string (with harmless
-    pandas/numpy import lines stripped) or raises ValueError.
+    pandas/numpy import lines stripped) or raises CodeSecurityError.
     """
     is_safe, reason = validate_code_safety(code_string)
     if not is_safe:
-        raise ValueError(f"Refused to execute unsafe code: {reason}")
+        raise CodeSecurityError(f"Refused to execute unsafe code: {reason}")
 
     cleaned_code = re.sub(
         r"^\s*import\s+(pandas\s+as\s+pd|numpy\s+as\s+np)\s*$",
@@ -166,7 +176,7 @@ def _validate_and_prepare_code(code_string):
 
     is_safe, reason = validate_code_safety_ast(cleaned_code)
     if not is_safe:
-        raise ValueError(f"Refused to execute unsafe code: {reason}")
+        raise CodeSecurityError(f"Refused to execute unsafe code: {reason}")
 
     return cleaned_code
 
@@ -275,7 +285,7 @@ def safe_exec_cleaning_function(code_string, function_name, df, make_copy=True, 
 
     status, payload, captured_output = result_queue.get()
     if status == "error":
-        raise ValueError(f"Error while executing generated function: {payload}")
+        raise CleaningExecutionError(f"Error while executing generated function: {payload}")
 
     result_df = payload
     return result_df, captured_output
@@ -347,7 +357,7 @@ def exec_trusted_cleaning_function(code_string, function_name, df, make_copy=Tru
 
     status, payload, captured_output = result_queue.get()
     if status == "error":
-        raise ValueError(f"Error while executing generated function: {payload}")
+        raise CleaningExecutionError(f"Error while executing generated function: {payload}")
 
     return payload, captured_output
 
@@ -782,7 +792,18 @@ def build_cleaning_code_prompt(anomaly, custom_instruction=None):
         "'clean_step' that takes a dataframe and returns a modified dataframe.\n"
         "Rules:\n"
         "(1) Only handle the specific column and patterns indicated.\n"
-        "(2) CRITICAL: When computing reductions like .median(), .mean(), .quantile() or clipping on columns that may have string or object dtype (such as numbers mixed with words or currency), NEVER call .median() or .mean() directly on df[col]. Always safely compute numeric values first: `num_s = pd.to_numeric(df[col], errors='coerce')` and compute the statistic on `num_s` (e.g. `fill_val = num_s.median()`). This prevents fatal 'Cannot perform reduction with string dtype' errors.\n"
+        "(2) CRITICAL PANDAS DTYPE & ASSIGNMENT RULES:\n"
+        "    - In modern pandas (pandas 3.x), text/string columns use 'str' / StringDtype. Directly assigning a float or int (e.g. df.loc[..., col] = numeric_val or df[col].fillna(numeric_val)) on a 'str' column will crash with:\n"
+        "      'TypeError: Invalid value ... for dtype str. Value should be a string or missing value, got float64 instead'.\n"
+        "    - When fixing a numeric column or handling outliers / missing values / mixed types on a column containing numbers, ALWAYS convert the column to numeric first:\n"
+        "          df[col] = pd.to_numeric(df[col], errors='coerce')\n"
+        "      Once converted to numeric, reductions, clipping, conditions, or .fillna() can be performed safely on df[col].\n"
+        "    - If filling missing values with a numeric statistic (median / mean):\n"
+        "          num_s = pd.to_numeric(df[col], errors='coerce')\n"
+        "          fill_val = num_s.median()\n"
+        "          df[col] = num_s.fillna(fill_val)\n"
+        "      Assigning `df[col] = num_s.fillna(fill_val)` converts the column to numeric and fills missing values simultaneously without dtype errors.\n"
+        "    - If the column is non-numeric/textual, fill missing values with a string (e.g. 'Unknown' or str(mode_val)).\n"
         "(3) Return ONLY valid Python code with `def clean_step(df):`, no conversational text or markdown fences."
     )
     user_content = f"Write a cleaning function for this anomaly:\n{json.dumps(anomaly, indent=2, default=str)}"
@@ -930,7 +951,7 @@ def mock_llm_call(prompt):
                 "        num_s = pd.to_numeric(df[col], errors='coerce')\n"
                 "        if num_s.notna().any():\n"
                 "            fill_val = num_s.median()\n"
-                "            df[col] = df[col].fillna(fill_val)\n"
+                "            df[col] = num_s.fillna(fill_val)\n"
                 "            print(f'Filled missing values in {col} with median: {fill_val}')\n"
                 "        else:\n"
                 "            mode_s = df[col].mode()\n"
@@ -949,7 +970,7 @@ def mock_llm_call(prompt):
                 "        num_s = pd.to_numeric(df[col], errors='coerce')\n"
                 "        if num_s.notna().any():\n"
                 "            fill_val = num_s.mean()\n"
-                "            df[col] = df[col].fillna(fill_val)\n"
+                "            df[col] = num_s.fillna(fill_val)\n"
                 "            print(f'Filled missing {col} with mean: {fill_val:.2f}')\n"
                 "        else:\n"
                 "            mode_s = df[col].mode()\n"
@@ -965,7 +986,11 @@ def mock_llm_call(prompt):
                 "    import pandas as pd\n"
                 f"    col = '{target_col}'\n"
                 "    if col in df.columns:\n"
-                "        df[col] = df[col].fillna(0)\n"
+                "        num_s = pd.to_numeric(df[col], errors='coerce')\n"
+                "        if num_s.notna().any():\n"
+                "            df[col] = num_s.fillna(0)\n"
+                "        else:\n"
+                "            df[col] = df[col].fillna('0')\n"
                 "        print(f'Filled missing values in {col} with 0')\n"
                 "    return df"
             )
@@ -1008,7 +1033,7 @@ def mock_llm_call(prompt):
                 "        num_s = pd.to_numeric(df[col], errors='coerce')\n"
                 "        if num_s.notna().any():\n"
                 "            fill_val = num_s.median()\n"
-                "            df[col] = df[col].fillna(fill_val)\n"
+                "            df[col] = num_s.fillna(fill_val)\n"
                 "            print(f'Filled missing values in {col} with median ({fill_val})')\n"
                 "        else:\n"
                 "            mode_series = df[col].mode()\n"

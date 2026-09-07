@@ -28,7 +28,8 @@ from profiling_functions import load_data, generate_health_report
 from llm_layer import (
     get_explanation, get_cleaning_code, get_data_summary, get_analysis_plan,
     safe_exec_cleaning_function, compute_diff, compute_cell_diff_sample,
-    check_diff_safety, CleaningLedger, test_api_key
+    check_diff_safety, CleaningLedger, test_api_key,
+    CodeSecurityError, CleaningExecutionError
 )
 
 app = FastAPI(title="CRUST API — Intelligent Data Profiling & Cleaning Studio")
@@ -380,8 +381,10 @@ def preview_fix(
         )
     except TimeoutError as e:
         raise HTTPException(status_code=400, detail=f"Execution timed out (infinite loop protection): {e}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Security AST guardrail rejected code: {e}")
+    except CodeSecurityError as e:
+        raise HTTPException(status_code=400, detail=f"Security guardrail rejected code: {e}")
+    except CleaningExecutionError as e:
+        raise HTTPException(status_code=400, detail=f"Cleaning function runtime error: {e}")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Execution failed: {e}")
 
