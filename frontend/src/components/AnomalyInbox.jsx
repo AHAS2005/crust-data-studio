@@ -90,10 +90,13 @@ export default function AnomalyInbox({
     : anomalies;
 
   const toggleExpand = (anomalyKey) => {
-    setExpandedCards(prev => ({
-      ...prev,
-      [anomalyKey]: !prev[anomalyKey]
-    }));
+    setExpandedCards(prev => {
+      const currentlyOpen = prev[anomalyKey] !== undefined ? prev[anomalyKey] : Boolean(explanations[anomalyKey]);
+      return {
+        ...prev,
+        [anomalyKey]: !currentlyOpen
+      };
+    });
   };
 
   const getIssueBadge = (issue) => {
@@ -180,7 +183,7 @@ export default function AnomalyInbox({
 
           return (
             <div 
-              key={`${anomaly.column}-${anomaly.issue}-${idx}`}
+              key={cardKey}
               className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
             >
               {/* Card Body */}

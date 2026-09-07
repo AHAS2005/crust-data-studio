@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   History, 
@@ -7,7 +7,8 @@ import {
   CheckCircle2, 
   Layers, 
   ArrowDown, 
-  ShieldAlert 
+  ShieldAlert,
+  Loader2
 } from 'lucide-react';
 
 export default function HistoryDrawer({ 
@@ -18,10 +19,18 @@ export default function HistoryDrawer({
   isRollingBack 
 }) {
   const [rollbackModalStep, setRollbackModalStep] = useState(null);
+  const [rollingBackStepId, setRollingBackStepId] = useState(null);
+
+  useEffect(() => {
+    if (!isRollingBack) {
+      setRollingBackStepId(null);
+    }
+  }, [isRollingBack]);
 
   if (!isOpen) return null;
 
   const handleInitiateRollback = (step) => {
+    setRollingBackStepId(step.step_id);
     // If it's the very last step, cascade or single are equivalent
     const isLastStep = step.step_id === steps[steps.length - 1]?.step_id;
     if (isLastStep) {
@@ -34,6 +43,7 @@ export default function HistoryDrawer({
 
   const confirmRollback = (mode) => {
     if (rollbackModalStep) {
+      setRollingBackStepId(rollbackModalStep.step_id);
       onRollback(rollbackModalStep.step_id, mode);
       setRollbackModalStep(null);
     }
@@ -110,11 +120,20 @@ export default function HistoryDrawer({
                         <button
                           onClick={() => handleInitiateRollback(step)}
                           disabled={isRollingBack}
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-rose-950/50 hover:text-rose-700 dark:hover:text-rose-300 hover:border-rose-200 dark:hover:border-rose-800 text-slate-500 dark:text-slate-400 text-xs font-medium transition-all cursor-pointer"
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-rose-950/50 hover:text-rose-700 dark:hover:text-rose-300 hover:border-rose-200 dark:hover:border-rose-800 text-slate-500 dark:text-slate-400 text-xs font-medium transition-all cursor-pointer disabled:opacity-60"
                           title="Undo this step"
                         >
-                          <Undo2 className="w-3.5 h-3.5" />
-                          <span>Undo</span>
+                          {isRollingBack && rollingBackStepId === step.step_id ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600 dark:text-rose-400" />
+                              <span className="text-rose-600 dark:text-rose-400">Reverting...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Undo2 className="w-3.5 h-3.5" />
+                              <span>Undo</span>
+                            </>
+                          )}
                         </button>
                       </div>
 

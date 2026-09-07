@@ -38,6 +38,7 @@ export default function FileDropzone({ onFileSelected, onLoadSample, isProfiling
 
   const handleDragLeave = (e) => {
     e.preventDefault();
+    if (e.currentTarget.contains(e.relatedTarget)) return;
     setIsDragging(false);
   };
 
@@ -138,7 +139,7 @@ export default function FileDropzone({ onFileSelected, onLoadSample, isProfiling
             </div>
 
             <p className="text-xs text-slate-400 dark:text-slate-500">
-              CSV files supported • Multi-encoding resilient • Secure in-memory session processing
+              CSV files supported • Multi-encoding resilient • Secure upload — your file is processed on our server and never stored
             </p>
           </div>
         )}

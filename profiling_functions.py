@@ -699,11 +699,17 @@ def check_logical_date_order(df, column_types):
 
     start_keywords = ["start", "begin", "admission", "check_in", "created"]
     end_keywords = ["end", "finish", "discharge", "check_out", "closed"]
+    seen_pairs = set()
 
     for start_col in date_cols:
         for end_col in date_cols:
             if start_col == end_col:
                 continue
+            pair_key = (start_col, end_col)
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+
             start_is_start = any(k in start_col.lower() for k in start_keywords)
             end_is_end = any(k in end_col.lower() for k in end_keywords)
 
