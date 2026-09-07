@@ -624,7 +624,7 @@ class CleaningLedger:
         structure_signature = f"{list(df.columns)}|{df.shape}|{[str(t) for t in df.dtypes]}"
         return hashlib.sha256(structure_signature.encode()).hexdigest()
 
-    def add_step(self, anomaly_target, description, code_string, function_name):
+    def add_step(self, anomaly_target, description, code_string, function_name="clean_step"):
         # Use a running counter instead of len(self.steps) + 1 - the old
         # approach silently reused step_ids after a remove_step() call
         # (e.g. steps [1,2,3], remove 2 -> [1,3], next add_step would
@@ -1108,10 +1108,14 @@ def mock_llm_call(prompt):
 # LIVE LLM CALL (Groq) - secondary fallback provider
 # ---------------------------------------------------------
 
-def live_llm_call_groq(prompt, model="llama-3.3-70b-versatile", max_retries=3, api_key=None):
+def live_llm_call_groq(prompt, model="openai/gpt-oss-20b", max_retries=3, api_key=None):
     """
     Sends the prompt to the Groq API and returns the raw text response.
     Requires `pip install groq`. Uses api_key if supplied, otherwise GROQ_API_KEY env var.
+
+    Default model: openai/gpt-oss-20b (fast, reliable).
+    If the primary model is unavailable (decommissioned/404), automatically falls back
+    to alternative models before giving up.
     """
     import time
 
@@ -1130,7 +1134,7 @@ def live_llm_call_groq(prompt, model="llama-3.3-70b-versatile", max_retries=3, a
             "GROQ_API_KEY not set. Please provide a Groq key in Settings or set the GROQ_API_KEY environment variable."
         )
 
-    client = Groq(api_key=key)
+    client = Groq(api_key=key, timeout=60.0)
 
     system_text = prompt.get("system", "")
     user_text = prompt["user"]
@@ -1140,27 +1144,43 @@ def live_llm_call_groq(prompt, model="llama-3.3-70b-versatile", max_retries=3, a
         messages.append({"role": "system", "content": system_text})
     messages.append({"role": "user", "content": user_text})
 
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.0,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            last_error = e
-            error_text = str(e)
-            if "429" in error_text or "rate_limit" in error_text.lower():
-                wait_time = 20 * (attempt + 1)
-                print(f"  [Groq rate limit hit - waiting {wait_time}s before retry {attempt + 1}/{max_retries}]")
-                time.sleep(wait_time)
-                continue
-            else:
-                raise RuntimeError(f"Groq API call failed: {error_text}")
+    # Build ordered list of models to try — primary first, then fallbacks
+    models_to_try = [model]
+    fallbacks = ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "groq/compound-mini"]
+    for fb in fallbacks:
+        if fb != model and fb not in models_to_try:
+            models_to_try.append(fb)
 
-    raise RuntimeError(f"Groq API call failed after {max_retries} retries: {last_error}")
+    last_error = None
+    for current_model in models_to_try:
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model=current_model,
+                    messages=messages,
+                    temperature=0.0,
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                last_error = e
+                error_text = str(e)
+                if "429" in error_text or "rate_limit" in error_text.lower():
+                    wait_time = 20 * (attempt + 1)
+                    print(f"  [Groq rate limit hit on {current_model} - waiting {wait_time}s before retry {attempt + 1}/{max_retries}]")
+                    time.sleep(wait_time)
+                    continue
+                elif "404" in error_text or "model_not_found" in error_text.lower() or "model_decommissioned" in error_text.lower():
+                    print(f"  [Groq model '{current_model}' is unavailable (404/decommissioned). Trying next model...]")
+                    break  # skip to next model
+                elif "timeout" in error_text.lower() or "timed out" in error_text.lower():
+                    print(f"  [Groq {current_model} timed out on attempt {attempt + 1}/{max_retries}]")
+                    if attempt < max_retries - 1:
+                        continue
+                    break  # skip to next model
+                else:
+                    raise RuntimeError(f"Groq API call failed: {error_text}")
+
+    raise RuntimeError(f"Groq API call failed after trying all available models: {last_error}")
 
 
 def live_llm_call_nemotron(prompt, model="nvidia/llama-3.1-nemotron-70b-instruct", max_retries=3, api_key=None):
@@ -1185,7 +1205,7 @@ def live_llm_call_nemotron(prompt, model="nvidia/llama-3.1-nemotron-70b-instruct
             "NVIDIA_API_KEY not set. Please provide an NVIDIA key in Settings or get one free at build.nvidia.com."
         )
 
-    client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=key)
+    client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=key, timeout=60.0)
 
     system_text = prompt.get("system", "")
     user_text = prompt["user"]
@@ -1320,10 +1340,21 @@ def _dispatch_llm_call(
         )
 
     if provider == "auto":
-        providers_in_order = [
-            ("Nemotron", lambda p: live_llm_call_nemotron(p, api_key=nvidia_api_key)),
-            ("Groq", lambda p: live_llm_call_groq(p, api_key=groq_api_key)),
-        ]
+        has_groq = bool(groq_api_key or os.environ.get("GROQ_API_KEY"))
+        has_nvidia = bool(nvidia_api_key or os.environ.get("NVIDIA_API_KEY"))
+
+        if not has_groq and not has_nvidia:
+            raise RuntimeError(
+                "No live LLM API key configured. Please add your Groq or NVIDIA key in Settings (⚙), "
+                "or switch to Offline Demo mode."
+            )
+
+        providers_in_order = []
+        if has_groq:
+            providers_in_order.append(("Groq", lambda p: live_llm_call_groq(p, api_key=groq_api_key)))
+        if has_nvidia:
+            providers_in_order.append(("Nemotron", lambda p: live_llm_call_nemotron(p, api_key=nvidia_api_key)))
+
         errors = []
         for name, call_fn in providers_in_order:
             try:
@@ -1331,11 +1362,15 @@ def _dispatch_llm_call(
             except Exception as e:
                 errors.append(f"{name}: {e}")
                 print(f"  [{name} failed - trying next provider...]")
-        raise RuntimeError("All providers failed. " + " | ".join(errors))
+        raise RuntimeError("All configured providers failed: " + " | ".join(errors))
 
     if provider == "groq":
+        if not groq_api_key and not os.environ.get("GROQ_API_KEY"):
+            raise RuntimeError("Groq API key not set. Please enter your Groq API key (gsk_...) in Settings (⚙) or set the GROQ_API_KEY environment variable.")
         return live_llm_call_groq(prompt, api_key=groq_api_key)
     if provider == "nemotron":
+        if not nvidia_api_key and not os.environ.get("NVIDIA_API_KEY"):
+            raise RuntimeError("NVIDIA API key not set. Please enter your NVIDIA key (nvapi-...) in Settings (⚙) or set the NVIDIA_API_KEY environment variable.")
         return live_llm_call_nemotron(prompt, api_key=nvidia_api_key)
     raise ValueError(f"Unknown provider '{provider}' - use 'custom', 'nemotron', 'groq', 'mock', or 'auto'.")
 
@@ -1464,8 +1499,9 @@ def test_api_key(provider, api_key=None, base_url=None, model=None):
         try:
             from groq import Groq
             client = Groq(api_key=key, timeout=20.0)
+            # Use gpt-oss-20b (fast, always-on) for key validation
             client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="openai/gpt-oss-20b",
                 messages=[{"role": "user", "content": "ping"}],
                 max_tokens=2,
             )
@@ -1474,6 +1510,8 @@ def test_api_key(provider, api_key=None, base_url=None, model=None):
             err_msg = str(e)
             if "401" in err_msg or "403" in err_msg or "invalid_api_key" in err_msg.lower():
                 return {"valid": False, "provider": "groq", "error": "Invalid Groq API key (401 Unauthorized). Please check your key at console.groq.com."}
+            if "404" in err_msg or "model_not_found" in err_msg.lower() or "model_decommissioned" in err_msg.lower():
+                return {"valid": False, "provider": "groq", "error": f"The test model is unavailable on Groq. This may be a temporary issue — your key format looks valid. Try the chatbox below to confirm."}
             if "timed out" in err_msg.lower() or "timeout" in err_msg.lower():
                 return {"valid": False, "provider": "groq", "error": "Groq connection timed out. Please test with 'hi' in the chatbox below or retry."}
             return {"valid": False, "provider": "groq", "error": f"Groq connection failed: {err_msg}"}

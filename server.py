@@ -166,6 +166,12 @@ class TestChatRequest(BaseModel):
     model: Optional[str] = None
 
 
+def _clean_header_str(val: Optional[str]) -> Optional[str]:
+    if val and val.strip():
+        return val.strip()
+    return None
+
+
 def get_llm_credentials(
     x_nvidia_api_key: Optional[str] = None,
     x_groq_api_key: Optional[str] = None,
@@ -174,16 +180,16 @@ def get_llm_credentials(
     x_custom_model: Optional[str] = None,
     x_custom_key: Optional[str] = None
 ):
-    provider = x_llm_provider or "auto"
+    provider = _clean_header_str(x_llm_provider) or "auto"
     use_mock = (provider == "mock")
     return {
         "use_mock": use_mock,
         "provider": provider,
-        "nvidia_api_key": x_nvidia_api_key or os.environ.get("NVIDIA_API_KEY"),
-        "groq_api_key": x_groq_api_key or os.environ.get("GROQ_API_KEY"),
-        "custom_base_url": x_custom_url or os.environ.get("CUSTOM_LLM_URL"),
-        "custom_model": x_custom_model or os.environ.get("CUSTOM_LLM_MODEL"),
-        "custom_api_key": x_custom_key or os.environ.get("CUSTOM_LLM_KEY"),
+        "nvidia_api_key": _clean_header_str(x_nvidia_api_key) or os.environ.get("NVIDIA_API_KEY"),
+        "groq_api_key": _clean_header_str(x_groq_api_key) or os.environ.get("GROQ_API_KEY"),
+        "custom_base_url": _clean_header_str(x_custom_url) or os.environ.get("CUSTOM_LLM_URL"),
+        "custom_model": _clean_header_str(x_custom_model) or os.environ.get("CUSTOM_LLM_MODEL"),
+        "custom_api_key": _clean_header_str(x_custom_key) or os.environ.get("CUSTOM_LLM_KEY"),
     }
 
 

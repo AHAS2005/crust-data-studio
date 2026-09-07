@@ -25,7 +25,7 @@ const PRESETS = [
   { label: 'LM Studio (Local)', url: 'http://localhost:1234/v1', model: 'local-model', hint: 'Local inference via LM Studio server' },
   { label: 'OpenAI', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini', hint: 'Official OpenAI GPT-4o-mini' },
   { label: 'OpenRouter', url: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-chat', hint: 'Universal aggregator for all models' },
-  { label: 'Groq', url: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', hint: 'Ultra-fast LPU inference' },
+  { label: 'Groq', url: 'https://api.groq.com/openai/v1', model: 'openai/gpt-oss-20b', hint: 'Ultra-fast LPU inference' },
   { label: 'NVIDIA NIM', url: 'https://integrate.api.nvidia.com/v1', model: 'nvidia/llama-3.1-nemotron-70b-instruct', hint: 'NVIDIA accelerated microservice' },
 ];
 
@@ -380,7 +380,7 @@ export default function ApiKeyModal({ isOpen, onClose, onProviderSaved }) {
               <div className="flex items-center justify-between text-xs">
                 <label className="font-semibold text-slate-700 dark:text-slate-300">NVIDIA API Key (nvapi-...)</label>
                 <a 
-                  href="https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b" 
+                  href="https://build.nvidia.com" 
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium flex items-center gap-1"
@@ -397,7 +397,7 @@ export default function ApiKeyModal({ isOpen, onClose, onProviderSaved }) {
                 className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-mono text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
               />
               <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                Connects to NVIDIA NIM using Llama 3.1 Nemotron & Nemotron 3 Ultra.
+                Connects to NVIDIA NIM using Llama 3.1 Nemotron 70B Instruct.
               </p>
             </div>
           )}
@@ -425,7 +425,7 @@ export default function ApiKeyModal({ isOpen, onClose, onProviderSaved }) {
                 className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-mono text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               />
               <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                Sub-second inference responses with Llama 3.3 70B Versatile.
+                Sub-second inference responses on Groq LPUs with OpenAI GPT-OSS 20B / 120B.
               </p>
             </div>
           )}
